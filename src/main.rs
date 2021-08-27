@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::path::Path;
 
 use ethers::prelude::Signer;
@@ -42,7 +42,7 @@ fn select_address(prefixes: &HashSet<String>, addr: Address) -> bool {
     let address = format!("{:?}", addr);
     // ¯\_(ツ)_/¯
     (
-        prefixes.contains(&address[2..6]) &&
+        prefixes.contains(&address[2..6]) ||
           prefixes.contains(&address[38..42])
     ) ||
       (
@@ -56,30 +56,66 @@ fn select_address(prefixes: &HashSet<String>, addr: Address) -> bool {
       )
 }
 
+struct Mnemonics {}
+
+impl Mnemonics {
+    fn new() -> Mnemonics {
+        Mnemonics {}
+    }
+}
+
+impl Iterator for Mnemonics {
+    type Item = Mnemonic<English>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match Mnemonic::new_with_count(&mut thread_rng(), 12) {
+            Ok(mnemonic) => Some(mnemonic),
+            Err(e) => {
+                panic!("{:?}", e);
+            },
+        }
+    }
+}
+
+use std::thread;
+
 fn main() {
-    let mut rng = thread_rng();
     let mut count = 0u32;
     let prefixes = load_prefixes();
-    loop {
+    let mnemonics = Mnemonics::new();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let pool = rayon::ThreadPoolBuilder::new()
+      .num_threads(8)
+      .build()
+      .unwrap();
+
+    thread::spawn(move || {
+        for mnemonic in mnemonics {
+            let tx = tx.clone();
+            pool.spawn(move || {
+                let wallet = to_wallet(&mnemonic);
+                match wallet {
+                    Ok((addr, phrase)) => {
+                        tx.send((addr, phrase)).unwrap();
+                    },
+                    Err(e) => {
+                        eprintln!("{:?}", e);
+                    }
+                }
+            });
+        }
+    });
+
+    for (addr, phrase) in rx.into_iter() {
         count += 1;
         if count % 100 == 0 {
             eprint!(".");
-            io::stderr().flush().unwrap();
         }
-        let mnemonic = Mnemonic::new_with_count(&mut rng, 12).unwrap();
-        let wallet = to_wallet(&mnemonic);
-        match wallet {
-            Ok((addr, phrase)) => {
-                if select_address(&prefixes, addr) {
-                    eprintln!();
-                    println!("{:?}: {}: ({}): {}", addr, phrase, addr, count);
-                    count = 0;
-                }
-            },
-            Err(e) => {
-                println!("{:?}", e);
-                break;
-            }
+        if select_address(&prefixes, addr) {
+            eprintln!();
+            println!("{:?}: {}: ({}): {}", addr, phrase, addr, count);
+            count = 0;
         }
     }
 }
