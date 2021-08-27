@@ -78,10 +78,24 @@ impl Iterator for Mnemonics {
 }
 
 use std::thread;
+use std::env;
+use structopt::StructOpt;
+use std::path::PathBuf;
+
+#[derive(StructOpt)]
+struct Cli {
+    #[structopt(short = "n", long = "threads", default_value = "10")]
+    threads: usize,
+
+    #[structopt(parse(from_os_str), short, long)]
+    input: PathBuf,
+}
 
 fn main() {
+    let args: Cli = Cli::from_args();
+
     let pool = rayon::ThreadPoolBuilder::new()
-      .num_threads(12)
+      .num_threads(args.threads)
       .build()
       .unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
