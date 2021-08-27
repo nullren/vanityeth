@@ -42,7 +42,7 @@ fn select_address(prefixes: &HashSet<String>, addr: Address) -> bool {
     let address = format!("{:?}", addr);
     // ¯\_(ツ)_/¯
     (
-        prefixes.contains(&address[2..6]) ||
+        prefixes.contains(&address[2..6]) &&
           prefixes.contains(&address[38..42])
     ) ||
       (
@@ -80,36 +80,28 @@ impl Iterator for Mnemonics {
 use std::thread;
 
 fn main() {
-    let mut count = 0u32;
-    let prefixes = load_prefixes();
-    let mnemonics = Mnemonics::new();
-
-    let (tx, rx) = std::sync::mpsc::channel();
     let pool = rayon::ThreadPoolBuilder::new()
-      .num_threads(8)
+      .num_threads(12)
       .build()
       .unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
 
     thread::spawn(move || {
+        let mnemonics = Mnemonics::new();
         for mnemonic in mnemonics {
             let tx = tx.clone();
             pool.spawn(move || {
-                let wallet = to_wallet(&mnemonic);
-                match wallet {
-                    Ok((addr, phrase)) => {
-                        tx.send((addr, phrase)).unwrap();
-                    },
-                    Err(e) => {
-                        eprintln!("{:?}", e);
-                    }
-                }
+                let wallet = to_wallet(&mnemonic).unwrap();
+                tx.send(wallet).unwrap();
             });
         }
     });
 
+    let prefixes = load_prefixes();
+    let mut count = 0u32;
     for (addr, phrase) in rx.into_iter() {
         count += 1;
-        if count % 100 == 0 {
+        if count % 1000 == 0 {
             eprint!(".");
         }
         if select_address(&prefixes, addr) {
