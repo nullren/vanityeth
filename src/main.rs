@@ -2,126 +2,125 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
+use std::path::PathBuf;
+use std::thread;
 
 use ethers::prelude::Signer;
 use ethers::signers::{coins_bip39::{English, Mnemonic}, MnemonicBuilder};
-use rand::thread_rng;
 use ethers::types::Address;
+use rand::thread_rng;
+use structopt::StructOpt;
 
 fn to_wallet(mnemonic: &Mnemonic<English>) -> Result<(Address, String), Box<dyn std::error::Error>> {
-    let phrase: &str = &mnemonic.to_phrase()?;
-    let wallet = MnemonicBuilder::<English>::default()
-      .phrase(phrase)
-      .build()?;
-    Ok((wallet.address(), phrase.to_owned()))
+  let phrase: &str = &mnemonic.to_phrase()?;
+  let wallet = MnemonicBuilder::<English>::default()
+    .phrase(phrase)
+    .build()?;
+  Ok((wallet.address(), phrase.to_owned()))
 }
 
 // The output is wrapped in a Result to allow matching on errors
 // Returns an Iterator to the Reader of the lines of the file.
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-    where P: AsRef<Path>, {
-    let file = File::open(filename)?;
-    Ok(io::BufReader::new(file).lines())
+  where P: AsRef<Path>, {
+  let file = File::open(filename)?;
+  Ok(io::BufReader::new(file).lines())
 }
 
-fn load_prefixes() -> HashSet<String> {
-    let mut prefixes: HashSet<String> = HashSet::new();
-    if let Ok(lines) = read_lines("./ethaddrs.txt") {
-        // Consumes the iterator, returns an (Optional) String
-        for line in lines {
-            if let Ok(ip) = line {
-                prefixes.insert(ip);
-            }
-        }
+fn load_prefixes<P>(filename: P) -> HashSet<String> where P: AsRef<Path> {
+  let mut prefixes: HashSet<String> = HashSet::new();
+  if let Ok(lines) = read_lines(filename) {
+    // Consumes the iterator, returns an (Optional) String
+    for line in lines {
+      if let Ok(ip) = line {
+        prefixes.insert(ip);
+      }
     }
-    eprintln!("read {} prefixes", prefixes.len());
-    return prefixes;
+  }
+  eprintln!("read {} prefixes", prefixes.len());
+  return prefixes;
 }
 
 fn select_address(prefixes: &HashSet<String>, addr: Address) -> bool {
-    let address = format!("{:?}", addr);
-    // ¯\_(ツ)_/¯
+  let address = format!("{:?}", addr);
+  // ¯\_(ツ)_/¯
+  (
+    prefixes.contains(&address[2..6]) &&
+      prefixes.contains(&address[38..42])
+  ) ||
     (
-        prefixes.contains(&address[2..6]) &&
-          prefixes.contains(&address[38..42])
-    ) ||
-      (
-          &address[2..3] == &address[3..4] &&
-            &address[2..3] == &address[4..5] &&
-            &address[2..3] == &address[5..6] &&
-            &address[2..3] == &address[38..39] &&
-            &address[2..3] == &address[39..40] &&
-            &address[2..3] == &address[40..41] &&
-            &address[2..3] == &address[41..42]
-      )
+      &address[2..3] == &address[3..4] &&
+        &address[2..3] == &address[4..5] &&
+        &address[2..3] == &address[5..6] &&
+        &address[2..3] == &address[38..39] &&
+        &address[2..3] == &address[39..40] &&
+        &address[2..3] == &address[40..41] &&
+        &address[2..3] == &address[41..42]
+    )
 }
 
 struct Mnemonics {}
 
 impl Mnemonics {
-    fn new() -> Mnemonics {
-        Mnemonics {}
-    }
+  fn new() -> Mnemonics {
+    Mnemonics {}
+  }
 }
 
 impl Iterator for Mnemonics {
-    type Item = Mnemonic<English>;
+  type Item = Mnemonic<English>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match Mnemonic::new_with_count(&mut thread_rng(), 12) {
-            Ok(mnemonic) => Some(mnemonic),
-            Err(e) => {
-                panic!("{:?}", e);
-            },
-        }
+  fn next(&mut self) -> Option<Self::Item> {
+    match Mnemonic::new_with_count(&mut thread_rng(), 12) {
+      Ok(mnemonic) => Some(mnemonic),
+      Err(e) => {
+        panic!("{:?}", e);
+      }
     }
+  }
 }
-
-use std::thread;
-use std::env;
-use structopt::StructOpt;
-use std::path::PathBuf;
 
 #[derive(StructOpt)]
 struct Cli {
-    #[structopt(short = "n", long = "threads", default_value = "10")]
-    threads: usize,
-
-    #[structopt(parse(from_os_str), short, long)]
-    input: PathBuf,
+  /// Worker threads to use to generate wallets
+  #[structopt(short, long, default_value = "10")]
+  workers: usize,
+  /// Read address prefixes/suffixes from input file
+  #[structopt(parse(from_os_str), short, long)]
+  input: PathBuf,
 }
 
 fn main() {
-    let args: Cli = Cli::from_args();
+  let args: Cli = Cli::from_args();
+  let (tx, rx) = std::sync::mpsc::channel();
 
+  let workers = args.workers;
+  thread::spawn(move || {
+    let mnemonics = Mnemonics::new();
     let pool = rayon::ThreadPoolBuilder::new()
-      .num_threads(args.threads)
+      .num_threads(workers)
       .build()
       .unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    thread::spawn(move || {
-        let mnemonics = Mnemonics::new();
-        for mnemonic in mnemonics {
-            let tx = tx.clone();
-            pool.spawn(move || {
-                let wallet = to_wallet(&mnemonic).unwrap();
-                tx.send(wallet).unwrap();
-            });
-        }
-    });
-
-    let prefixes = load_prefixes();
-    let mut count = 0u32;
-    for (addr, phrase) in rx.into_iter() {
-        count += 1;
-        if count % 1000 == 0 {
-            eprint!(".");
-        }
-        if select_address(&prefixes, addr) {
-            eprintln!();
-            println!("{:?}: {}: ({}): {}", addr, phrase, addr, count);
-            count = 0;
-        }
+    for mnemonic in mnemonics {
+      let tx = tx.clone();
+      pool.spawn(move || {
+        let wallet = to_wallet(&mnemonic).unwrap();
+        tx.send(wallet).unwrap();
+      });
     }
+  });
+
+  let prefixes = load_prefixes(args.input);
+  let mut count = 0u32;
+  for (addr, phrase) in rx.into_iter() {
+    count += 1;
+    if count % 1000 == 0 {
+      eprint!(".");
+    }
+    if select_address(&prefixes, addr) {
+      eprintln!();
+      println!("{:?}: {}: ({}): {}", addr, phrase, addr, count);
+      count = 0;
+    }
+  }
 }
