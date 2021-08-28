@@ -13,6 +13,8 @@ use ethers::signers::{
 };
 use ethers::types::Address;
 use rand::thread_rng;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use structopt::StructOpt;
 
 fn to_wallet(mnemonic: Mnemonic<English>) -> Result<(Address, String), Box<dyn std::error::Error>> {
@@ -105,21 +107,36 @@ fn main() {
     let args: Cli = Cli::from_args();
     let workers = args.workers;
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        eprintln!("stopping search");
+        r.store(false, Ordering::Relaxed);
+    })
+    .expect("could not add ctrl-c handler");
+
     // produce mnemonics
     let (m_tx, m_rx) = std::sync::mpsc::sync_channel(workers);
+    let r = running.clone();
     thread::spawn(move || {
         let mnemonics = Mnemonics::new();
         let mut count = 0u32;
         for mnemonic in mnemonics {
+            if !r.load(Ordering::Relaxed) {
+                break;
+            }
             let m_tx = m_tx.clone();
             count += 1;
             if count % 1000 == 0 {
-                eprint!("+");
+                eprint!("m");
             }
             m_tx.send(mnemonic).unwrap();
         }
+        eprintln!("stopping mnemonic generator");
+        drop(m_tx);
     });
 
+    // workers and wallet generators
     let (w_tx, w_rx) = std::sync::mpsc::sync_channel(workers + 1);
     for id in 0..workers {
         w_tx.send(id).unwrap();
@@ -127,19 +144,24 @@ fn main() {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut count = 0u32;
-        for (mnemonic, worker) in m_rx.iter().zip(w_rx) {
+        for (worker, mnemonic) in w_rx.iter().zip(m_rx) {
             count += 1;
             if count % 1000 == 0 {
-                eprint!("/");
+                eprint!("w");
             }
             let w_tx = w_tx.clone();
             let tx = tx.clone();
             thread::spawn(move || {
                 let wallet = to_wallet(mnemonic).unwrap();
-                tx.send(wallet).unwrap();
-                w_tx.send(worker).unwrap();
+                if let Err(e) = tx.send(wallet) {
+                    eprintln!("cannot send address: {}", e);
+                }
+                if let Err(e) = w_tx.send(worker) {
+                    eprintln!("cannot send worker: {}", e);
+                }
             });
         }
+        eprintln!("stopping workers");
     });
 
     // filter wallets
@@ -149,7 +171,7 @@ fn main() {
     for (addr, phrase) in rx {
         count += 1;
         if count % 1000 == 0 {
-            eprint!(".");
+            eprint!("a");
         }
         if select_address(&prefixes, addr) {
             eprintln!();
@@ -164,4 +186,5 @@ fn main() {
             start = Instant::now();
         }
     }
+    eprintln!("done");
 }

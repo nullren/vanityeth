@@ -14,5 +14,5 @@ license = "MIT"
 [dependencies]
 ethers = "0.4.0"
 rand = "0.8.4"
-rayon = "1.5.1"
 structopt = "0.3.22"
+ctrlc = "3.2.0"
