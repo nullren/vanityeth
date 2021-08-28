@@ -3,6 +3,7 @@ name = "vanityeth"
 version = "0.1.0"
 authors = ["Renning Bruns <ren@renmail.net>"]
 edition = "2018"
+description = "Allows searching for vanity ethereum addresses and mnemonic to generate it"
 documentation = "https://github.com/nullren/vanityeth"
 homepage = "https://github.com/nullren/vanityeth"
 repository = "https://github.com/nullren/vanityeth"
