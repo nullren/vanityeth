@@ -95,17 +95,21 @@ impl Iterator for Mnemonics {
 
 #[derive(StructOpt)]
 struct Cli {
-    /// Worker threads to use to generate wallets
-    #[structopt(short, long, default_value = "10")]
+    /// Worker threads to use to generate wallets. The default value 0 means create as many workers as there are CPUs.
+    #[structopt(short, long, default_value = "0")]
     workers: usize,
-    /// Read address prefixes/suffixes from input file
+    /// Read address prefixes/suffixes from input file.
     #[structopt(parse(from_os_str), short, long)]
     input: PathBuf,
 }
 
 fn main() {
     let args: Cli = Cli::from_args();
-    let workers = args.workers;
+    let workers = if args.workers < 1 {
+        num_cpus::get() - 1
+    } else {
+        args.workers
+    };
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
