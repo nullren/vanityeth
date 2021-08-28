@@ -120,19 +120,13 @@ fn main() {
     let r = running.clone();
     thread::spawn(move || {
         let mnemonics = Mnemonics::new();
-        let mut count = 0u32;
         for mnemonic in mnemonics {
             if !r.load(Ordering::Relaxed) {
                 break;
             }
             let m_tx = m_tx.clone();
-            count += 1;
-            if count % 1000 == 0 {
-                eprint!("m");
-            }
             m_tx.send(mnemonic).unwrap();
         }
-        eprintln!("stopping mnemonic generator");
         drop(m_tx);
     });
 
@@ -143,25 +137,18 @@ fn main() {
     }
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     thread::spawn(move || {
-        let mut count = 0u32;
         for (worker, mnemonic) in w_rx.iter().zip(m_rx) {
-            count += 1;
-            if count % 1000 == 0 {
-                eprint!("w");
-            }
             let w_tx = w_tx.clone();
             let tx = tx.clone();
             thread::spawn(move || {
                 let wallet = to_wallet(mnemonic).unwrap();
-                if let Err(e) = tx.send(wallet) {
-                    eprintln!("cannot send address: {}", e);
-                }
+                tx.send(wallet).unwrap();
+                // w_tx gets dropped when m_tx is closed
                 if let Err(e) = w_tx.send(worker) {
                     eprintln!("cannot send worker: {}", e);
                 }
             });
         }
-        eprintln!("stopping workers");
     });
 
     // filter wallets
@@ -171,7 +158,7 @@ fn main() {
     for (addr, phrase) in rx {
         count += 1;
         if count % 1000 == 0 {
-            eprint!("a");
+            eprint!(".");
         }
         if select_address(&prefixes, addr) {
             eprintln!();
@@ -186,5 +173,5 @@ fn main() {
             start = Instant::now();
         }
     }
-    eprintln!("done");
+    eprintln!("workers terminated");
 }
