@@ -145,7 +145,9 @@ fn main() {
                 tx.send(wallet).unwrap();
                 // w_tx gets dropped when m_tx is closed
                 if let Err(e) = w_tx.send(worker) {
-                    eprintln!("cannot send worker: {}", e);
+                    if format!("{}", e) != "sending on a closed channel" {
+                        eprintln!("cannot send worker: {}", e);
+                    }
                 }
             });
         }
@@ -173,5 +175,9 @@ fn main() {
             start = Instant::now();
         }
     }
-    eprintln!("workers terminated");
+    let duration = start.elapsed();
+    eprintln!(
+        "workers terminated; {:.2} wallets per second checked",
+        (count as f64) / duration.as_secs_f64()
+    );
 }
