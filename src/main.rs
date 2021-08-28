@@ -42,11 +42,15 @@ where
     if let Ok(lines) = read_lines(filename) {
         // Consumes the iterator, returns an (Optional) String
         for line in lines {
-            if let Ok(ip) = line {
-                if ip.len() != 4 {
-                    panic!("input file must contain only 4 letter words: {} is ")
+            if let Ok(word) = line {
+                if word.len() != 4 {
+                    panic!(
+                        "input file must contain only 4 letter words: {:?} is {} characters",
+                        word,
+                        word.len()
+                    )
                 }
-                prefixes.insert(ip);
+                prefixes.insert(word);
             }
         }
     }
