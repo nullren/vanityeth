@@ -15,9 +15,7 @@ use ethers::types::Address;
 use rand::thread_rng;
 use structopt::StructOpt;
 
-fn to_wallet(
-    mnemonic: &Mnemonic<English>,
-) -> Result<(Address, String), Box<dyn std::error::Error>> {
+fn to_wallet(mnemonic: Mnemonic<English>) -> Result<(Address, String), Box<dyn std::error::Error>> {
     let phrase: &str = &mnemonic.to_phrase()?;
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(phrase)
@@ -105,28 +103,50 @@ struct Cli {
 
 fn main() {
     let args: Cli = Cli::from_args();
-    let (tx, rx) = std::sync::mpsc::channel();
-
     let workers = args.workers;
+
+    // produce mnemonics
+    let (m_tx, m_rx) = std::sync::mpsc::sync_channel(workers);
     thread::spawn(move || {
         let mnemonics = Mnemonics::new();
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap();
+        let mut count = 0u32;
         for mnemonic in mnemonics {
+            let m_tx = m_tx.clone();
+            count += 1;
+            if count % 1000 == 0 {
+                eprint!("+");
+            }
+            m_tx.send(mnemonic).unwrap();
+        }
+    });
+
+    let (w_tx, w_rx) = std::sync::mpsc::sync_channel(workers + 1);
+    for id in 0..workers {
+        w_tx.send(id).unwrap();
+    }
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut count = 0u32;
+        for (mnemonic, worker) in m_rx.iter().zip(w_rx) {
+            count += 1;
+            if count % 1000 == 0 {
+                eprint!("/");
+            }
+            let w_tx = w_tx.clone();
             let tx = tx.clone();
-            pool.spawn(move || {
-                let wallet = to_wallet(&mnemonic).unwrap();
+            thread::spawn(move || {
+                let wallet = to_wallet(mnemonic).unwrap();
                 tx.send(wallet).unwrap();
+                w_tx.send(worker).unwrap();
             });
         }
     });
 
+    // filter wallets
     let prefixes = load_prefixes(args.input);
     let mut count = 0u32;
     let mut start = Instant::now();
-    for (addr, phrase) in rx.into_iter() {
+    for (addr, phrase) in rx {
         count += 1;
         if count % 1000 == 0 {
             eprint!(".");
