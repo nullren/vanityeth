@@ -59,7 +59,17 @@ where
     return prefixes;
 }
 
-fn select_address(prefixes: &HashSet<String>, addr: Address) -> bool {
+type Selector = Box<dyn Fn(Address) -> bool>;
+
+fn select_from_file<P>(filename: P) -> Selector
+where
+    P: AsRef<Path>,
+{
+    let prefixes = load_prefixes(filename);
+    Box::new(move |addr| addr_matches_map(prefixes.clone(), addr))
+}
+
+fn addr_matches_map(prefixes: HashSet<String>, addr: Address) -> bool {
     let address = format!("{:?}", addr);
     // ¯\_(ツ)_/¯
     (prefixes.contains(&address[2..6]) && prefixes.contains(&address[38..42]))
@@ -70,6 +80,24 @@ fn select_address(prefixes: &HashSet<String>, addr: Address) -> bool {
             && &address[2..3] == &address[39..40]
             && &address[2..3] == &address[40..41]
             && &address[2..3] == &address[41..42])
+}
+
+fn select_prefix(prefix: String) -> Selector {
+    Box::new(move |addr| addr_has_prefix(addr, prefix.clone()))
+}
+
+fn addr_has_prefix(addr: Address, prefix: String) -> bool {
+    let address = format!("{:?}", addr);
+    &address[2..(2 + prefix.len())] == prefix
+}
+
+fn select_suffix(suffix: String) -> Selector {
+    Box::new(move |addr| addr_has_suffix(addr, suffix.clone()))
+}
+
+fn addr_has_suffix(addr: Address, suffix: String) -> bool {
+    let address = format!("{:?}", addr);
+    &address[(42 - suffix.len())..42] == suffix
 }
 
 struct Mnemonics {}
@@ -100,7 +128,13 @@ struct Cli {
     workers: usize,
     /// Read address prefixes/suffixes from input file.
     #[structopt(parse(from_os_str), short, long)]
-    input: PathBuf,
+    input: Option<PathBuf>,
+    /// Filter addresses with prefix
+    #[structopt(short, long)]
+    prefix: Option<String>,
+    /// Filter addresses with suffix
+    #[structopt(short, long)]
+    suffix: Option<String>,
 }
 
 fn main() {
@@ -136,6 +170,7 @@ fn main() {
 
     // workers and wallet generators
     let (w_tx, w_rx) = std::sync::mpsc::sync_channel(workers + 1);
+    eprintln!("starting {} worker threads", workers);
     for id in 0..workers {
         w_tx.send(id).unwrap();
     }
@@ -158,7 +193,16 @@ fn main() {
     });
 
     // filter wallets
-    let prefixes = load_prefixes(args.input);
+    let select = if let Some(filename) = args.input {
+        select_from_file(filename)
+    } else if let Some(suffix) = args.suffix {
+        select_suffix(suffix)
+    } else if let Some(prefix) = args.prefix {
+        select_prefix(prefix)
+    } else {
+        Box::new(|_| true)
+    };
+
     let mut count = 0u32;
     let mut start = Instant::now();
     for (addr, phrase) in rx {
@@ -166,7 +210,7 @@ fn main() {
         if count % 1000 == 0 {
             eprint!(".");
         }
-        if select_address(&prefixes, addr) {
+        if select(addr) {
             eprintln!();
             let duration = start.elapsed();
             eprintln!(
