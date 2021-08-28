@@ -4,6 +4,7 @@ use std::io::{self, BufRead};
 use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
+use std::time::Instant;
 
 use ethers::prelude::Signer;
 use ethers::signers::{
@@ -124,6 +125,7 @@ fn main() {
 
     let prefixes = load_prefixes(args.input);
     let mut count = 0u32;
+    let mut start = Instant::now();
     for (addr, phrase) in rx.into_iter() {
         count += 1;
         if count % 1000 == 0 {
@@ -131,8 +133,15 @@ fn main() {
         }
         if select_address(&prefixes, addr) {
             eprintln!();
-            println!("{:?}: {}: ({}): {}", addr, phrase, addr, count);
+            let duration = start.elapsed();
+            eprintln!(
+                "{} wallets since last match; {:.2} wallets per second checked",
+                count,
+                (count as f64) / duration.as_secs_f64()
+            );
+            println!("{}: {}", addr, phrase);
             count = 0;
+            start = Instant::now();
         }
     }
 }
