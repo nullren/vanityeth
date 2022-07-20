@@ -1,6 +1,6 @@
 [package]
 name = "vanityeth"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Renning Bruns <ren@renmail.net>"]
 edition = "2018"
 description = "Allows searching for vanity ethereum addresses and mnemonic to generate it"
@@ -12,8 +12,8 @@ categories = ["command-line-utilities"]
 license = "MIT"
 
 [dependencies]
-ethers = "0.4.0"
-rand = "0.8.4"
-structopt = "0.3.22"
-ctrlc = "3.2.0"
-num_cpus = "1.13.0"
+ethers = "0.14"
+rand = "0.8"
+structopt = "0.3"
+ctrlc = "3.2"
+num_cpus = "1.6"
